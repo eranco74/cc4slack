@@ -180,8 +180,15 @@ class ClaudeSlackAgent:
         elif isinstance(message, ResultMessage):
             # Capture session ID for future resume
             if hasattr(message, "session_id") and message.session_id:
+                is_new_session = session.claude_session_id is None
                 session.claude_session_id = message.session_id
                 await self.session_manager.save(session)
+
+                if is_new_session:
+                    await updater.append(
+                        f"\n\n---\n:id: *Session ID:* `{message.session_id}`\n"
+                        f"_To continue from terminal:_ `claude --resume {message.session_id}`"
+                    )
 
             # Handle result based on subtype
             if hasattr(message, "subtype"):
