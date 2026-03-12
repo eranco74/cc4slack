@@ -242,9 +242,11 @@ async def handle_connect(
         channel=channel,
         thread_ts=thread_ts,
         text=(
-            f":link: *Connected to existing Claude session*\n"
+            f":link: *Connected to Claude session*\n"
             f"Session ID: `{claude_session_id[:12]}...`\n\n"
-            f"Messages in this thread will now continue that session."
+            f"Messages in this thread will resume that session's conversation history.\n"
+            f"_Note: The terminal session must not be actively running. "
+            f"Close it first if it's still open._"
         ),
     )
     logger.info(f"Connected Slack thread {channel}:{thread_ts} to Claude session {claude_session_id}")

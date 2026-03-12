@@ -87,7 +87,21 @@ class ClaudeSlackAgent:
             await updater.append("\n\n:stop_sign: _Operation cancelled_")
         except Exception as e:
             logger.exception(f"Claude error in session {session.id}: {e}")
-            await updater.append(f"\n\n:x: *Error:* {str(e)}")
+            error_msg = str(e)
+            # Detect resume/initialize failures (session likely still active in terminal)
+            if "Control request timeout: initialize" in error_msg or (
+                "exit code" in error_msg and session.claude_session_id
+            ):
+                await updater.append(
+                    "\n\n:x: *Failed to resume session.*\n"
+                    "This usually means the session is still running in a terminal. "
+                    "Close the terminal session first, then try again.\n\n"
+                    "_You can also use `clear session` and start fresh._"
+                )
+                # Clear the bad session ID so next message starts fresh
+                session.claude_session_id = None
+            else:
+                await updater.append(f"\n\n:x: *Error:* {error_msg}")
         finally:
             # Mark session as not processing
             session.is_processing = False
