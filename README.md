@@ -62,15 +62,15 @@ python -m venv .venv
 source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 
 # Install dependencies
-pip install -r requirements.txt
+pip install -e .
 
-# Copy example env file
-cp .env.example .env
+# For development dependencies (testing, linting)
+pip install -e ".[dev]"
 ```
 
 ### 4. Configure Environment Variables
 
-Edit `.env` with your tokens:
+Create a `.env` file with your tokens:
 
 ```env
 # Required - Slack tokens
@@ -117,10 +117,24 @@ Continue conversations in threads - each thread maintains its own session contex
 
 The app uses Slack Block Kit for rich interactions:
 
-- **Approve/Reject**: When Claude wants to run a command or write a file, you'll see approve/reject buttons
-- **Cancel**: Stop an ongoing operation
-- **Clear Session**: Reset the conversation context
-- **Status**: Check the current session status
+### Tool Approval Requests
+When Claude wants to perform a potentially dangerous operation, an approval request is posted with tool-specific details:
+
+- **Bash**: Shows the command description and the full command to be executed
+- **Write**: Shows the target file path and a content preview
+- **Edit**: Shows the file path, the text being replaced, and the replacement text
+- **Other tools**: Shows the raw input as JSON
+
+Each request includes **Approve** (green) and **Reject** (red) buttons. Once either is clicked, the message updates to show the decision. Clicking on an already-decided request shows a notice that it was already processed.
+
+### In-Progress Controls
+While Claude is processing, a **Cancel** button is available to stop the current operation and cancel any pending approvals for the session.
+
+### Response Controls
+After Claude responds, two buttons are shown:
+
+- **Clear Session**: Resets the conversation context (cancels pending approvals and removes session state)
+- **Status**: Shows session info including processing state, session ID, and creation time
 
 ## Configuration Options
 
@@ -143,21 +157,21 @@ The app uses Slack Block Kit for rich interactions:
 
 ```
 src/
-├── main.py                 # Entry point
-├── config.py               # Configuration
+├── __init__.py             # Package init, version
 ├── slack/
-│   ├── app.py              # Slack Bolt app setup
-│   ├── events.py           # Event handlers (mentions, DMs)
-│   ├── actions.py          # Button click handlers
-│   ├── blocks.py           # Block Kit UI components
-│   └── message_updater.py  # Streaming message updates
+│   ├── __init__.py
+│   ├── actions.py          # Button click handlers (approve/reject/cancel/status)
+│   └── blocks.py           # Block Kit UI components
 ├── claude/
-│   ├── agent.py            # Claude Code SDK wrapper
-│   └── tool_approval.py    # Approval coordination
+│   ├── __init__.py
+│   └── tool_approval.py    # Approval coordination (async event-based)
 └── sessions/
+    ├── __init__.py
     ├── manager.py          # Session lifecycle
-    └── storage.py          # Storage implementations
+    └── storage.py          # Storage implementations (memory backend)
 ```
+
+> **Note:** Several modules listed in the planned architecture (`main.py`, `config.py`, `slack/app.py`, `slack/events.py`, `slack/message_updater.py`, `claude/agent.py`) are not yet implemented.
 
 ## Development
 
