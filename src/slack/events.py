@@ -257,7 +257,13 @@ async def handle_connect(
     session_manager: SessionManager,
     config: Settings | None = None,
 ) -> None:
-    """Handle the 'connect' command to attach to an existing Claude session."""
+    """Handle the 'connect' command to attach to an existing Claude session.
+
+    Supports:
+        connect          - connect to most recent session
+        connect 1        - connect by index (from `sessions` list)
+        connect <uuid>   - connect by full session ID
+    """
     from ..config import get_settings
 
     if config is None:
@@ -266,44 +272,44 @@ async def handle_connect(
     claude_session_id: str | None = None
 
     if session_id_arg:
-        # User provided a specific session ID
-        claude_session_id = session_id_arg
+        # Check if it's a numeric index
+        if session_id_arg.isdigit():
+            index = int(session_id_arg) - 1  # 1-based to 0-based
+            available = list_available_sessions(project_dir=config.working_directory)
+            if 0 <= index < len(available):
+                claude_session_id = available[index][0]
+            else:
+                await client.chat_postMessage(
+                    channel=channel,
+                    thread_ts=thread_ts,
+                    text=f":warning: Invalid session index `{session_id_arg}`. Use `sessions` to see available sessions.",
+                )
+                return
+        else:
+            # Full session ID provided
+            claude_session_id = session_id_arg
     else:
-        # Try to read from the session file
+        # No argument — auto-connect to the most recent session
+        # First try the session file (from SessionStart hook)
         claude_session_id = read_session_id_from_file(config.claude_session_file)
 
+        if not claude_session_id:
+            # Fall back to the most recent session on disk
+            available = list_available_sessions(project_dir=config.working_directory)
+            if available:
+                claude_session_id = available[0][0]
+
     if not claude_session_id:
-        # No session ID found - show available sessions
-        available = list_available_sessions(project_dir=config.working_directory)
-        if available:
-            session_list = "\n".join(
-                f"• `{sid[:12]}...` — {title}" for sid, _, title, _ in available[:5]
-            )
-            await client.chat_postMessage(
-                channel=channel,
-                thread_ts=thread_ts,
-                text=(
-                    f":warning: No session ID found in `{config.claude_session_file}`.\n\n"
-                    f"*Recent sessions found on disk:*\n{session_list}\n\n"
-                    f"Use `connect <session-id>` to connect to one of these sessions.\n\n"
-                    f"_Tip: Set up a SessionStart hook to auto-write the session ID. "
-                    f"See the README for details._"
-                ),
-            )
-        else:
-            await client.chat_postMessage(
-                channel=channel,
-                thread_ts=thread_ts,
-                text=(
-                    f":warning: No session ID found.\n\n"
-                    f"• No file at `{config.claude_session_file}`\n"
-                    f"• No sessions found in `~/.claude/projects/`\n\n"
-                    f"*To connect:*\n"
-                    f"1. Run `/status` in your Claude terminal to get the session ID\n"
-                    f"2. Then use `connect <session-id>` here\n\n"
-                    f"_Or set up a SessionStart hook to auto-write the ID._"
-                ),
-            )
+        await client.chat_postMessage(
+            channel=channel,
+            thread_ts=thread_ts,
+            text=(
+                ":warning: No sessions found.\n\n"
+                "*To connect:*\n"
+                "1. Run `/status` in your Claude terminal to get the session ID\n"
+                "2. Then use `connect <session-id>` here"
+            ),
+        )
         return
 
     # Get or create the Slack session for this thread
@@ -364,7 +370,7 @@ async def handle_list_sessions(
 
     now = time.time()
     lines = []
-    for sid, _path, title, mtime in available[:10]:
+    for i, (sid, _path, title, mtime) in enumerate(available[:10], start=1):
         age_s = now - mtime
         if age_s < 3600:
             age = f"{int(age_s / 60)}m ago"
@@ -372,7 +378,7 @@ async def handle_list_sessions(
             age = f"{int(age_s / 3600)}h ago"
         else:
             age = f"{int(age_s / 86400)}d ago"
-        lines.append(f"• `{sid[:12]}...` ({age})\n   _{title}_")
+        lines.append(f"*{i}.* `{sid[:12]}...` ({age})\n    _{title}_")
 
     session_list = "\n".join(lines)
     await client.chat_postMessage(
@@ -381,7 +387,7 @@ async def handle_list_sessions(
         text=(
             f":file_folder: *Available sessions* ({config.working_directory})\n\n"
             f"{session_list}\n\n"
-            f"_Use `connect <session-id>` to resume a session._"
+            f"_Use `connect` to resume the most recent, or `connect <number>` to pick one._"
         ),
     )
 
