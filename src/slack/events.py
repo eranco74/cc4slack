@@ -27,6 +27,9 @@ MENTION_PATTERN = re.compile(r"<@[A-Z0-9]+>\s*")
 # Regex to match connect command with optional session ID
 CONNECT_PATTERN = re.compile(r"^connect\s*(.*)$", re.IGNORECASE)
 
+# Regex to match sessions command
+SESSIONS_PATTERN = re.compile(r"^sessions?\s*$", re.IGNORECASE)
+
 
 def clean_mention(text: str) -> str:
     """Remove bot mention from message text."""
@@ -79,6 +82,16 @@ def register_event_handlers(
             )
             return
 
+        # Check for sessions command
+        if SESSIONS_PATTERN.match(user_message):
+            await handle_list_sessions(
+                channel=channel,
+                thread_ts=thread_ts,
+                client=client,
+                config=config,
+            )
+            return
+
         await process_request(
             channel=channel,
             thread_ts=thread_ts,
@@ -114,7 +127,8 @@ def register_event_handlers(
             return
 
         # Check for connect command
-        connect_match = CONNECT_PATTERN.match(text.strip())
+        stripped = text.strip()
+        connect_match = CONNECT_PATTERN.match(stripped)
         if connect_match:
             await handle_connect(
                 channel=channel,
@@ -126,10 +140,20 @@ def register_event_handlers(
             )
             return
 
+        # Check for sessions command
+        if SESSIONS_PATTERN.match(stripped):
+            await handle_list_sessions(
+                channel=channel,
+                thread_ts=thread_ts,
+                client=client,
+                config=config,
+            )
+            return
+
         await process_request(
             channel=channel,
             thread_ts=thread_ts,
-            user_message=text.strip(),
+            user_message=stripped,
             client=client,
             session_manager=session_manager,
             claude_agent=claude_agent,
@@ -148,24 +172,78 @@ def read_session_id_from_file(file_path: str) -> str | None:
     return None
 
 
-def list_available_sessions(claude_dir: str = os.path.expanduser("~/.claude/projects")) -> list[tuple[str, str]]:
+def get_session_title(file_path: str) -> str:
+    """Extract the first user message from a session transcript as a title."""
+    import json
+
+    try:
+        with open(file_path) as f:
+            for line in f:
+                try:
+                    data = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if (
+                    data.get("type") == "user"
+                    and data.get("message", {}).get("role") == "user"
+                    and not data.get("isMeta")
+                ):
+                    content = data["message"].get("content", "")
+                    if isinstance(content, str) and content.strip():
+                        title = content.strip()[:80]
+                        if len(content.strip()) > 80:
+                            title += "..."
+                        return title
+    except Exception as e:
+        logger.debug(f"Failed to read session title from {file_path}: {e}")
+    return "(no title)"
+
+
+def list_available_sessions(
+    claude_dir: str = os.path.expanduser("~/.claude/projects"),
+    project_dir: str | None = None,
+) -> list[tuple[str, str, str, float]]:
     """List available session IDs from Claude's project directories.
 
-    Returns list of (session_id, file_path) tuples, sorted by most recent first.
+    Args:
+        claude_dir: Base Claude projects directory.
+        project_dir: If set, only list sessions from this project's directory.
+
+    Returns list of (session_id, file_path, title, mtime) tuples, sorted by most recent first.
     """
-    sessions = []
+    sessions: list[tuple[str, str, str, float]] = []
     try:
-        if not os.path.isdir(claude_dir):
+        if project_dir:
+            # Encode the project path the same way Claude does
+            encoded = project_dir.replace("/", "-")
+            if encoded.startswith("-"):
+                encoded = encoded  # Claude keeps the leading dash
+            search_dir = os.path.join(claude_dir, encoded)
+            if not os.path.isdir(search_dir):
+                search_dir = claude_dir  # fallback to all
+        else:
+            search_dir = claude_dir
+
+        if not os.path.isdir(search_dir):
             return sessions
-        for root, _dirs, files in os.walk(claude_dir):
+
+        for root, _dirs, files in os.walk(search_dir):
             for f in files:
-                if f.endswith(".jsonl"):
+                if f.endswith(".jsonl") and not f.startswith("agent-"):
                     full_path = os.path.join(root, f)
                     session_id = f.removesuffix(".jsonl")
                     mtime = os.path.getmtime(full_path)
-                    sessions.append((session_id, full_path, mtime))
-        sessions.sort(key=lambda x: x[2], reverse=True)
-        return [(s[0], s[1]) for s in sessions]
+                    sessions.append((session_id, full_path, "", mtime))
+
+        sessions.sort(key=lambda x: x[3], reverse=True)
+
+        # Only fetch titles for top results (avoid reading too many files)
+        result = []
+        for sid, path, _, mtime in sessions[:10]:
+            title = get_session_title(path)
+            result.append((sid, path, title, mtime))
+
+        return result
     except Exception as e:
         logger.warning(f"Failed to list sessions from {claude_dir}: {e}")
         return []
@@ -196,10 +274,10 @@ async def handle_connect(
 
     if not claude_session_id:
         # No session ID found - show available sessions
-        available = list_available_sessions()
+        available = list_available_sessions(project_dir=config.working_directory)
         if available:
             session_list = "\n".join(
-                f"• `{sid}`" for sid, _ in available[:5]
+                f"• `{sid[:12]}...` — {title}" for sid, _, title, _ in available[:5]
             )
             await client.chat_postMessage(
                 channel=channel,
@@ -238,18 +316,134 @@ async def handle_connect(
     session.claude_session_id = claude_session_id
     await session_manager.save(session)
 
+    # Try to get a summary of the session being connected to
+    summary = _get_session_summary(claude_session_id, config.working_directory)
+
+    connect_text = (
+        f":link: *Connected to Claude session*\n"
+        f"Session ID: `{claude_session_id[:12]}...`\n\n"
+    )
+    if summary:
+        connect_text += f"*Session context:*\n{summary}\n\n"
+    connect_text += (
+        "Messages in this thread will resume that session's conversation history.\n"
+        "_Note: The terminal session must not be actively running. "
+        "Close it first if it's still open._"
+    )
+
+    await client.chat_postMessage(
+        channel=channel,
+        thread_ts=thread_ts,
+        text=connect_text,
+    )
+    logger.info(f"Connected Slack thread {channel}:{thread_ts} to Claude session {claude_session_id}")
+
+
+async def handle_list_sessions(
+    channel: str,
+    thread_ts: str,
+    client: AsyncWebClient,
+    config: Settings | None = None,
+) -> None:
+    """Handle the 'sessions' command to list available Claude sessions."""
+    import time
+    from ..config import get_settings
+
+    if config is None:
+        config = get_settings()
+
+    available = list_available_sessions(project_dir=config.working_directory)
+
+    if not available:
+        await client.chat_postMessage(
+            channel=channel,
+            thread_ts=thread_ts,
+            text=":file_folder: No sessions found.",
+        )
+        return
+
+    now = time.time()
+    lines = []
+    for sid, _path, title, mtime in available[:10]:
+        age_s = now - mtime
+        if age_s < 3600:
+            age = f"{int(age_s / 60)}m ago"
+        elif age_s < 86400:
+            age = f"{int(age_s / 3600)}h ago"
+        else:
+            age = f"{int(age_s / 86400)}d ago"
+        lines.append(f"• `{sid[:12]}...` ({age})\n   _{title}_")
+
+    session_list = "\n".join(lines)
     await client.chat_postMessage(
         channel=channel,
         thread_ts=thread_ts,
         text=(
-            f":link: *Connected to Claude session*\n"
-            f"Session ID: `{claude_session_id[:12]}...`\n\n"
-            f"Messages in this thread will resume that session's conversation history.\n"
-            f"_Note: The terminal session must not be actively running. "
-            f"Close it first if it's still open._"
+            f":file_folder: *Available sessions* ({config.working_directory})\n\n"
+            f"{session_list}\n\n"
+            f"_Use `connect <session-id>` to resume a session._"
         ),
     )
-    logger.info(f"Connected Slack thread {channel}:{thread_ts} to Claude session {claude_session_id}")
+
+
+def _get_session_summary(session_id: str, working_directory: str) -> str:
+    """Get a summary of a session by reading its transcript.
+
+    Returns a short summary with the first user message and the last few exchanges.
+    """
+    import json
+
+    claude_dir = os.path.expanduser("~/.claude/projects")
+    encoded = working_directory.replace("/", "-")
+    session_file = os.path.join(claude_dir, encoded, f"{session_id}.jsonl")
+
+    if not os.path.exists(session_file):
+        # Search all project dirs
+        for root, _dirs, files in os.walk(claude_dir):
+            if f"{session_id}.jsonl" in files:
+                session_file = os.path.join(root, f"{session_id}.jsonl")
+                break
+        else:
+            return ""
+
+    try:
+        first_user_msg = ""
+        user_messages: list[str] = []
+
+        with open(session_file) as f:
+            for line in f:
+                try:
+                    data = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if (
+                    data.get("type") == "user"
+                    and data.get("message", {}).get("role") == "user"
+                    and not data.get("isMeta")
+                ):
+                    content = data["message"].get("content", "")
+                    if isinstance(content, str) and content.strip():
+                        msg = content.strip()[:100]
+                        if len(content.strip()) > 100:
+                            msg += "..."
+                        if not first_user_msg:
+                            first_user_msg = msg
+                        user_messages.append(msg)
+
+        if not first_user_msg:
+            return ""
+
+        parts = [f"> *First message:* {first_user_msg}"]
+        if len(user_messages) > 1:
+            parts.append(f"> *Total messages:* {len(user_messages)}")
+            last_msg = user_messages[-1]
+            if last_msg != first_user_msg:
+                parts.append(f"> *Last message:* {last_msg}")
+
+        return "\n".join(parts)
+    except Exception as e:
+        logger.debug(f"Failed to read session summary: {e}")
+        return ""
 
 
 async def process_request(

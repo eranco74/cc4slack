@@ -24,6 +24,9 @@ class Session:
     last_notification: str = ""
     is_cancelled: bool = False
     is_processing: bool = False
+    total_cost_usd: float = 0.0
+    num_turns: int = 0
+    total_duration_ms: int = 0
 
     @property
     def thread_key(self) -> str:

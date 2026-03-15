@@ -201,6 +201,10 @@ def session_status(
     created_at: str,
     message_count: int | None = None,
     is_processing: bool = False,
+    cwd: str = "",
+    claude_session_id: str | None = None,
+    total_cost_usd: float = 0.0,
+    num_turns: int = 0,
 ) -> list[dict[str, Any]]:
     """Show session status information."""
     status_emoji = ":gear:" if is_processing else ":white_check_mark:"
@@ -211,6 +215,14 @@ def session_status(
         f"*Session ID:* `{session_id[:8]}...`",
         f"*Created:* {created_at}",
     ]
+    if claude_session_id:
+        fields.append(f"*Claude Session:* `{claude_session_id[:12]}...`")
+    if cwd:
+        fields.append(f"*Working Directory:* `{cwd}`")
+    if num_turns > 0:
+        fields.append(f"*Turns:* {num_turns}")
+    if total_cost_usd > 0:
+        fields.append(f"*Total Cost:* ${total_cost_usd:.4f}")
     if message_count is not None:
         fields.append(f"*Messages:* {message_count}")
 
@@ -238,14 +250,36 @@ def error_message(error: str) -> list[dict[str, Any]]:
     ]
 
 
-def session_cleared() -> list[dict[str, Any]]:
-    """Show session cleared message."""
+def session_cleared(
+    total_cost_usd: float = 0.0,
+    num_turns: int = 0,
+    total_duration_ms: int = 0,
+) -> list[dict[str, Any]]:
+    """Show session cleared message with usage summary."""
+    text = ":broom: *Session cleared.* Starting fresh!"
+
+    if num_turns > 0 or total_cost_usd > 0:
+        stats = []
+        if num_turns > 0:
+            stats.append(f"*Turns:* {num_turns}")
+        if total_cost_usd > 0:
+            stats.append(f"*Total Cost:* ${total_cost_usd:.4f}")
+        if total_duration_ms > 0:
+            duration_s = total_duration_ms / 1000
+            if duration_s >= 60:
+                mins = int(duration_s // 60)
+                secs = int(duration_s % 60)
+                stats.append(f"*Duration:* {mins}m {secs}s")
+            else:
+                stats.append(f"*Duration:* {duration_s:.1f}s")
+        text += "\n\n_Session summary:_\n" + "\n".join(stats)
+
     return [
         {
             "type": "section",
             "text": {
                 "type": "mrkdwn",
-                "text": ":broom: *Session cleared.* Starting fresh!",
+                "text": text,
             },
         },
     ]

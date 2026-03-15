@@ -182,7 +182,6 @@ class ClaudeSlackAgent:
             if hasattr(message, "session_id") and message.session_id:
                 is_new_session = session.claude_session_id is None
                 session.claude_session_id = message.session_id
-                await self.session_manager.save(session)
 
                 if is_new_session:
                     cwd = self.config.working_directory
@@ -191,6 +190,15 @@ class ClaudeSlackAgent:
                         f"_To continue from terminal:_\n"
                         f"```cd {cwd} && claude --resume {message.session_id}```"
                     )
+
+            # Track cost and usage
+            if hasattr(message, "total_cost_usd") and message.total_cost_usd is not None:
+                session.total_cost_usd += message.total_cost_usd
+            if hasattr(message, "num_turns"):
+                session.num_turns += message.num_turns
+            if hasattr(message, "duration_ms"):
+                session.total_duration_ms += message.duration_ms
+            await self.session_manager.save(session)
 
             # Handle result based on subtype
             if hasattr(message, "subtype"):

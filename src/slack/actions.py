@@ -22,6 +22,7 @@ def register_action_handlers(
     app: AsyncApp,
     session_manager: SessionManager,
     approval_manager: ApprovalManager,
+    config: Any = None,
 ) -> None:
     """Register Slack action handlers on the app."""
 
@@ -158,10 +159,16 @@ def register_action_handlers(
 
             logger.info(f"Clearing session for {channel}:{thread_ts}")
 
-            # Get session first to cancel any pending approvals
+            # Get session first to cancel any pending approvals and capture stats
             session = await session_manager.get(channel, thread_ts)
+            cost = 0.0
+            turns = 0
+            duration = 0
             if session:
                 await approval_manager.cancel_session_approvals(session.id)
+                cost = session.total_cost_usd
+                turns = session.num_turns
+                duration = session.total_duration_ms
 
             # Clear the session
             cleared = await session_manager.clear(channel, thread_ts)
@@ -171,7 +178,11 @@ def register_action_handlers(
                     channel=channel,
                     thread_ts=thread_ts,
                     text="Session cleared",
-                    blocks=blocks.session_cleared(),
+                    blocks=blocks.session_cleared(
+                        total_cost_usd=cost,
+                        num_turns=turns,
+                        total_duration_ms=duration,
+                    ),
                 )
             else:
                 await client.chat_postMessage(
@@ -202,6 +213,8 @@ def register_action_handlers(
             session = await session_manager.get_by_id(session_id)
 
             if session:
+                from ..config import get_settings
+                cwd = config.working_directory if config else get_settings().working_directory
                 await client.chat_postMessage(
                     channel=body["channel"]["id"],
                     thread_ts=body["message"].get("thread_ts") or body["message"]["ts"],
@@ -210,6 +223,10 @@ def register_action_handlers(
                         session_id=session.id,
                         created_at=session.created_at.strftime("%Y-%m-%d %H:%M UTC"),
                         is_processing=session.is_processing,
+                        cwd=cwd,
+                        claude_session_id=session.claude_session_id,
+                        total_cost_usd=session.total_cost_usd,
+                        num_turns=session.num_turns,
                     ),
                 )
             else:
