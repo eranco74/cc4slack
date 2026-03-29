@@ -1,0 +1,80 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: cc4slack-redis-data
+  labels:
+    app: cc4slack-redis
+    paas.redhat.com/appcode: AIS-001
+  annotations:
+    kubernetes.io/reclaimPolicy: Delete
+spec:
+  storageClassName: aws-ebs
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cc4slack-redis
+  labels:
+    app: cc4slack-redis
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cc4slack-redis
+  template:
+    metadata:
+      labels:
+        app: cc4slack-redis
+    spec:
+      containers:
+      - name: redis
+        image: redis:7-alpine
+        args: ["--appendonly", "yes"]
+        ports:
+        - name: redis
+          containerPort: 6379
+        volumeMounts:
+        - name: data
+          mountPath: /data
+        resources:
+          limits:
+            cpu: 200m
+            memory: 256Mi
+          requests:
+            cpu: 50m
+            memory: 128Mi
+        livenessProbe:
+          exec:
+            command: ["redis-cli", "ping"]
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        readinessProbe:
+          exec:
+            command: ["redis-cli", "ping"]
+          initialDelaySeconds: 5
+          periodSeconds: 5
+      volumes:
+      - name: data
+        persistentVolumeClaim:
+          claimName: cc4slack-redis-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cc4slack-redis
+  labels:
+    app: cc4slack-redis
+spec:
+  type: ClusterIP
+  ports:
+  - port: 6379
+    targetPort: redis
+    protocol: TCP
+    name: redis
+  selector:
+    app: cc4slack-redis
