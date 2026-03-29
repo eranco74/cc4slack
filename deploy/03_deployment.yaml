@@ -1,0 +1,58 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: assisted-bot
+  labels:
+    app: assisted-bot
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: assisted-bot
+  template:
+    metadata:
+      labels:
+        app: assisted-bot
+    spec:
+      containers:
+      - name: assisted-bot
+        image: quay.io/rh-ee-ovishlit/assisted-bot:latest
+        imagePullPolicy: Always
+        ports:
+        - name: http
+          containerPort: 3000
+        env:
+        - name: SLACK_SIGNING_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: cc4slack-secrets
+              key: slack-signing-secret
+        - name: SLACK_BOT_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: cc4slack-secrets
+              key: slack-bot-token
+        - name: REDIS_URL
+          valueFrom:
+            secretKeyRef:
+              name: cc4slack-secrets
+              key: redis-url
+        resources:
+          limits:
+            cpu: 500m
+            memory: 512Mi
+          requests:
+            cpu: 100m
+            memory: 256Mi
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: http
+          initialDelaySeconds: 5
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: http
+          initialDelaySeconds: 5
+          periodSeconds: 10

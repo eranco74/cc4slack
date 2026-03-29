@@ -1,0 +1,17 @@
+FROM registry.access.redhat.com/ubi9/python-312:latest
+
+USER root
+
+WORKDIR /opt/app-root/src
+
+COPY requirements-router.txt ./
+RUN pip install --no-cache-dir -r requirements-router.txt
+
+COPY shared/ shared/
+COPY router/ router/
+
+RUN chown -R 1001:0 /opt/app-root/src && chmod -R g=u /opt/app-root/src
+
+USER 1001
+
+CMD ["uvicorn", "router.main:app", "--host", "0.0.0.0", "--port", "3000"]

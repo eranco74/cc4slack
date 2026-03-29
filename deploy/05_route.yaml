@@ -1,0 +1,18 @@
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: assisted-bot
+  labels:
+    app: assisted-bot
+    shard: external
+  annotations:
+    haproxy.router.openshift.io/timeout: 3600s
+spec:
+  host: assisted-bot.apps.ext.spoke.prod.us-east-1.aws.paas.redhat.com
+  to:
+    kind: Service
+    name: assisted-bot
+  port:
+    targetPort: http
+  tls:
+    termination: edge
