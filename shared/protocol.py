@@ -1,5 +1,5 @@
 import json
-from typing import Literal, TypedDict, Union
+from typing import Literal, TypedDict
 
 
 class RegisterMessage(TypedDict):
@@ -66,21 +66,16 @@ class ConfigUpdateMessage(TypedDict):
     model: str
 
 
-AgentToRouter = Union[
-    RegisterMessage,
-    ReconnectMessage,
-    ResponseChunkMessage,
-    ResponseDoneMessage,
-    ResponseErrorMessage,
-    HeartbeatMessage,
-]
+AgentToRouter = (
+    RegisterMessage
+    | ReconnectMessage
+    | ResponseChunkMessage
+    | ResponseDoneMessage
+    | ResponseErrorMessage
+    | HeartbeatMessage
+)
 
-RouterToAgent = Union[
-    VerifiedMessage,
-    EventMessage,
-    CancelMessage,
-    ConfigUpdateMessage,
-]
+RouterToAgent = VerifiedMessage | EventMessage | CancelMessage | ConfigUpdateMessage
 
 AGENT_MESSAGE_TYPES = {
     "register",

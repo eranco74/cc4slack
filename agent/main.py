@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import secrets
+import sys
 
 from dotenv import load_dotenv
 
@@ -208,8 +209,6 @@ def _save_state(
 
 
 def main() -> None:
-    import sys
-
     load_dotenv()
     try:
         AgentSettings()
@@ -221,8 +220,7 @@ def main() -> None:
             "\nOptional:\n"
             "  WORKING_DIRECTORY=/path/to/project\n"
             "  PERMISSION_MODE=default|bypass|allowEdits|plan\n"
-            "  CLAUDE_MODEL=claude-sonnet-4-6 (default: uses CLI default)\n"
-            "  ANTHROPIC_API_KEY=sk-ant-...\n",
+            "  CLAUDE_MODEL=claude-sonnet-4-6 (default: uses CLI default)\n",
             file=sys.stderr,
         )
         sys.exit(1)

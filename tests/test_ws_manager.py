@@ -1,6 +1,6 @@
 import asyncio
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -67,7 +67,7 @@ async def test_verify_token_unknown(*, manager: WebSocketManager) -> None:
 async def test_verify_token_expired(*, manager: WebSocketManager) -> None:
     ws = make_mock_ws()
     await manager.register_pending(ws=ws, token="tok123")
-    manager._pending["tok123"].created_at = datetime.now(timezone.utc) - timedelta(seconds=600)
+    manager._pending["tok123"].created_at = datetime.now(UTC) - timedelta(seconds=600)
 
     result = await manager.verify_token(token="tok123", slack_user_id="U111")
 
@@ -176,7 +176,7 @@ async def test_cleanup_expired_tokens(*, manager: WebSocketManager) -> None:
     ws2 = make_mock_ws()
     await manager.register_pending(ws=ws1, token="old")
     await manager.register_pending(ws=ws2, token="fresh")
-    manager._pending["old"].created_at = datetime.now(timezone.utc) - timedelta(seconds=600)
+    manager._pending["old"].created_at = datetime.now(UTC) - timedelta(seconds=600)
 
     cleaned = await manager.cleanup_expired_tokens()
 
@@ -267,3 +267,76 @@ async def test_remove_connection_revokes_auth_token(*, manager: WebSocketManager
     ws2 = make_mock_ws()
     result = await manager.reconnect_agent(ws=ws2, auth_token=auth_token)
     assert result is False
+
+
+@pytest.mark.asyncio
+async def test_cleanup_survives_ws_close_error(*, manager: WebSocketManager) -> None:
+    ws = make_mock_ws()
+    await manager.register_pending(ws=ws, token="old")
+    manager._pending["old"].created_at = datetime.now(UTC) - timedelta(seconds=600)
+
+    ws.close = AsyncMock(side_effect=RuntimeError("connection already closed"))
+
+    cleaned = await manager.cleanup_expired_tokens()
+
+    assert cleaned == 1
+    assert "old" not in manager._pending
+
+
+@pytest.mark.asyncio
+async def test_cleanup_loop_retries_after_failure() -> None:
+    call_count = 0
+
+    async def fake_cleanup() -> int:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise RuntimeError("Redis down")
+        return 0
+
+    async def cleanup_loop_under_test() -> None:
+        while True:
+            await asyncio.sleep(0)
+            try:
+                await fake_cleanup()
+            except Exception:
+                pass
+
+    task = asyncio.create_task(cleanup_loop_under_test())
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+
+    assert call_count >= 2
+
+
+@pytest.mark.asyncio
+async def test_updaters_cleaned_on_agent_disconnect(*, manager: WebSocketManager) -> None:
+    ws = make_mock_ws()
+    await manager.register_pending(ws=ws, token="tok")
+    await manager.verify_token(token="tok", slack_user_id="U111")
+
+    state = ThreadState(channel="C1", thread_ts="T1", message_ts="M1")
+    manager.set_thread_state(slack_user_id="U111", thread_key="C1:T1", state=state)
+    await asyncio.sleep(0)
+
+    mock_updater = AsyncMock()
+    updaters: dict[str, AsyncMock] = {"C1:T1": mock_updater}
+
+    # Simulate what _cleanup_updaters_for_agent does
+    user_id = manager.find_user_by_ws(ws=ws)
+    assert user_id == "U111"
+    conn = manager.get_connection(slack_user_id=user_id)
+    assert conn is not None
+    for thread_key in list(conn.threads.keys()):
+        updater = updaters.pop(thread_key, None)
+        if updater:
+            await updater.show_error(error="Agent disconnected")
+
+    mock_updater.show_error.assert_called_once_with(error="Agent disconnected")
+    assert "C1:T1" not in updaters

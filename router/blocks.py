@@ -145,21 +145,6 @@ def agent_connected(*, slack_user_id: str) -> list[dict[str, Any]]:
     ]
 
 
-def agent_disconnected() -> list[dict[str, Any]]:
-    return [
-        {
-            "type": "section",
-            "text": {
-                "type": "mrkdwn",
-                "text": (
-                    ":warning: *Your agent disconnected.*"
-                    " Start it again on your beaker machine and re-verify."
-                ),
-            },
-        }
-    ]
-
-
 def agent_not_connected() -> list[dict[str, Any]]:
     return [
         {

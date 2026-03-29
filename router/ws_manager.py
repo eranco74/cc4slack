@@ -2,7 +2,7 @@ import asyncio
 import logging
 import secrets
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import WebSocket
 
@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 class PendingRegistration:
     ws: WebSocket
     token: str
-    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
 
 @dataclass
@@ -49,7 +49,7 @@ class WebSocketManager:
         if not pending:
             return False
 
-        age = (datetime.now(timezone.utc) - pending.created_at).total_seconds()
+        age = (datetime.now(UTC) - pending.created_at).total_seconds()
         if age > self._token_expiry_seconds:
             logger.warning(f"Token expired: {token[:8]}... (age={age:.0f}s)")
             return False
@@ -167,7 +167,7 @@ class WebSocketManager:
             )
 
     async def cleanup_expired_tokens(self) -> int:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         expired = [
             token
             for token, reg in self._pending.items()

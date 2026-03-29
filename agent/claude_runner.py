@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from collections import defaultdict
 from typing import Any
 
 from claude_code_sdk import query
@@ -229,6 +230,8 @@ def _format_tool_use(*, tool_name: str, tool_input: dict[str, Any]) -> str:
 
     template = TOOL_FORMATTERS.get(tool_name)
     if template:
-        return template.format_map(tool_input)
+        # SDK tool_input may be missing expected keys
+        safe_input = defaultdict(lambda: "?", tool_input)
+        return template.format_map(safe_input)
 
     return f":wrench: *Using tool:* `{tool_name}`"

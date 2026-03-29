@@ -251,6 +251,8 @@ async def test_thread_context_first_mention_fetches_full_thread() -> None:
     assert "[Your message]" in result
     assert "what do you think?" in result
     slack_client.conversations_replies.assert_called_once()
+    call_kwargs = slack_client.conversations_replies.call_args.kwargs
+    assert call_kwargs["inclusive"] is True
 
 
 @pytest.mark.asyncio
@@ -280,6 +282,7 @@ async def test_thread_context_second_mention_fetches_delta() -> None:
     call_kwargs = slack_client.conversations_replies.call_args.kwargs
     assert call_kwargs["oldest"] == "1002.0"
     assert call_kwargs["latest"] == "1004.0"
+    assert call_kwargs["inclusive"] is False
 
 
 @pytest.mark.asyncio

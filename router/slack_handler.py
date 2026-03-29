@@ -22,6 +22,7 @@ from .commands import (
     try_parse_command,
 )
 from .message_updater import SlackMessageUpdater
+from .thread_store import ThreadState
 
 if TYPE_CHECKING:
     from slack_sdk.web.async_client import AsyncWebClient
@@ -107,7 +108,6 @@ async def handle_slack_action(
     form = await request.form()
     payload = json.loads(form["payload"])
     action_id = payload["actions"][0]["action_id"]
-    json.loads(payload["actions"][0]["value"])
     channel = payload["channel"]["id"]
     thread_ts = payload["message"].get("thread_ts", payload["message"]["ts"])
     user_id = payload["user"]["id"]
@@ -224,20 +224,34 @@ async def _dispatch(
     slack_client: "AsyncWebClient",
     updaters: dict[str, SlackMessageUpdater],
 ) -> None:
+    # Auth gateway: only verify works without a connected agent
     command = try_parse_command(text=text)
+    if command and command[0] == "verify":
+        _, match = command
+        await handle_verify(
+            token=match.group(1),
+            slack_user_id=user_id,
+            channel=channel,
+            thread_ts=thread_ts,
+            client=slack_client,
+            ws_manager=ws_manager,
+        )
+        return
+
+    conn = ws_manager.get_connection(slack_user_id=user_id)
+    if not conn:
+        await slack_client.chat_postMessage(
+            channel=channel,
+            thread_ts=thread_ts,
+            text="No agent connected",
+            blocks=blocks.agent_not_connected(),
+        )
+        return
+
     if command:
         cmd_name, match = command
         if cmd_name == "help":
             await handle_help(channel=channel, thread_ts=thread_ts, client=slack_client)
-        elif cmd_name == "verify":
-            await handle_verify(
-                token=match.group(1),
-                slack_user_id=user_id,
-                channel=channel,
-                thread_ts=thread_ts,
-                client=slack_client,
-                ws_manager=ws_manager,
-            )
         elif cmd_name == "unregister":
             await handle_unregister(
                 slack_user_id=user_id,
@@ -283,16 +297,6 @@ async def _dispatch(
             )
         return
 
-    conn = ws_manager.get_connection(slack_user_id=user_id)
-    if not conn:
-        await slack_client.chat_postMessage(
-            channel=channel,
-            thread_ts=thread_ts,
-            text="No agent connected",
-            blocks=blocks.agent_not_connected(),
-        )
-        return
-
     await _forward_to_agent(
         user_id=user_id,
         channel=channel,
@@ -330,8 +334,6 @@ async def _forward_to_agent(
         blocks=blocks.thinking_indicator(),
     )
     message_ts = result["ts"]
-
-    from .thread_store import ThreadState
 
     state = ws_manager.get_thread_state(slack_user_id=user_id, thread_key=thread_key)
     if not state:
@@ -384,13 +386,14 @@ async def _build_prompt_with_thread_context(
     if not is_thread_reply:
         return text
 
-    oldest = last_processed_ts if last_processed_ts else thread_ts
+    is_first_fetch = not last_processed_ts
+    oldest = thread_ts if is_first_fetch else last_processed_ts
     result = await slack_client.conversations_replies(
         channel=channel,
         ts=thread_ts,
         oldest=oldest,
         latest=current_ts,
-        inclusive=False,
+        inclusive=is_first_fetch,
     )
     messages = result["messages"]
 

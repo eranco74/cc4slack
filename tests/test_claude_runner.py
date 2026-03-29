@@ -117,3 +117,14 @@ def test_format_tool_use_unknown() -> None:
     result = _format_tool_use(tool_name="CustomTool", tool_input={})
     assert "CustomTool" in result
     assert ":wrench:" in result
+
+
+def test_format_tool_use_missing_key_does_not_crash() -> None:
+    result = _format_tool_use(tool_name="Read", tool_input={})
+    assert "?" in result
+    assert ":mag:" in result
+
+
+def test_format_tool_use_partial_keys() -> None:
+    result = _format_tool_use(tool_name="Glob", tool_input={"other_field": "value"})
+    assert "?" in result
